@@ -1,0 +1,9 @@
+group,scenario,price_shock_pct,gas_cost_usd,before_eth_price,before_n_borrowers,before_n_undercollateralized,before_n_liquidated,before_total_collateral_value_usd,before_total_debt_usdc,before_total_shortfall,before_liquidation_rate_pct,after_eth_price,after_n_borrowers,after_n_undercollateralized,after_n_liquidated,after_total_collateral_value_usd,after_total_debt_usdc,after_total_shortfall,after_liquidation_rate_pct,liquidation_count,failed_count,liquidator_profit
+price_shock,baseline,0.0,5.0,2000.0,50,0,0,527522.2,310865.87,0.0,0.0,2000.0,50,0,0,527522.2,310865.87,0.0,0.0,0,0,0.0
+price_shock,shock_10,-0.1,5.0,1800.0,50,5,0,474769.98,310865.87,0.0,0.0,1800.0,50,0,0,453986.21,291071.8,0.0,0.0,5,0,964.7032500000009
+price_shock,shock_20,-0.2,5.0,1600.0,50,11,0,422017.76,310865.87,0.0,0.0,1600.0,50,3,0,351739.28,243933.99,432.55,0.0,30,7,3196.5941484375035
+price_shock,shock_30,-0.3,5.0,1400.0,50,24,0,369265.54,310865.87,0.0,0.0,1400.0,50,11,0,201518.98,151107.24,6579.06,0.0,67,36,7652.931398437511
+gas_sensitivity,gas_1,-0.2,1.0,1600.0,50,11,0,422017.76,310865.87,0.0,0.0,1600.0,50,3,0,351739.28,243933.99,432.55,0.0,30,7,3316.5941484375035
+gas_sensitivity,gas_5,-0.2,5.0,1600.0,50,11,0,422017.76,310865.87,0.0,0.0,1600.0,50,3,0,351739.28,243933.99,432.55,0.0,30,7,3196.5941484375035
+gas_sensitivity,gas_20,-0.2,20.0,1600.0,50,11,0,422017.76,310865.87,0.0,0.0,1600.0,50,4,0,352932.46,245070.35,432.55,0.0,24,6,2809.776000000004
+gas_sensitivity,gas_50,-0.2,50.0,1600.0,50,11,0,422017.76,310865.87,0.0,0.0,1600.0,50,4,0,355976.67,247969.59,432.55,0.0,19,7,2194.814000000003
