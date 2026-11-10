@@ -11,12 +11,16 @@ Giả định mô hình (rút gọn từ Aave V3):
 - close_factor = 0.50: tối đa 50% nợ được thanh lý mỗi lần
 - liquidation_bonus = 0.05: liquidator nhận thêm 5% ETH
 
-Lưu ý phân biệt:
-- is_touched: borrower đã bị thanh lý ít nhất một lần (một phần)
-- is_fully_repaid: nợ đã về 0, vị thế đóng hoàn toàn
-- realized_bad_debt: nợ còn lại sau khi collateral đã cạn kiệt
+Trạng thái borrower (3 loại, loại trừ nhau):
+  - ACTIVE:    còn nợ, collateral còn — vị thế đang hoạt động bình thường
+  - REPAID:    nợ về 0 do được thanh lý đủ — đóng hoàn toàn không phát sinh bad debt
+  - DEFAULTED: collateral cạn trước khi hết nợ — phần nợ còn lại trở thành bad debt
+
+Lưu ý: is_fully_repaid (cũ) đã được thay bằng is_repaid + is_defaulted để tránh
+nhầm lẫn giữa "trả hết nợ" và "vỡ nợ". Cả hai trường hợp đều có debt_usdc=0
+nhưng ý nghĩa hoàn toàn khác nhau.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import uuid
 
 LIQUIDATION_THRESHOLD = 0.825   # ngưỡng thanh lý (giả định, không phải Aave mainnet)
@@ -28,10 +32,11 @@ LIQUIDATION_BONUS = 0.05         # 5% bonus thưởng cho liquidator
 @dataclass
 class Borrower:
     borrower_id: str
-    collateral_eth: float       # ETH thế chấp
-    debt_usdc: float            # USDC đã vay
-    times_liquidated: int = 0   # số lần bị thanh lý (kể cả một phần)
-    realized_bad_debt: float = 0.0  # nợ còn lại sau khi collateral cạn kiệt
+    collateral_eth: float           # ETH thế chấp
+    debt_usdc: float                # USDC đã vay
+    times_liquidated: int = 0       # số lần bị thanh lý thành công (kể cả một phần)
+    realized_bad_debt: float = 0.0  # nợ không thu hồi được khi collateral cạn
+    _defaulted: bool = False        # True khi collateral đã cạn mà vẫn còn nợ
 
     @staticmethod
     def create(collateral_eth: float, debt_usdc: float) -> "Borrower":
@@ -40,6 +45,8 @@ class Borrower:
             collateral_eth=collateral_eth,
             debt_usdc=debt_usdc,
         )
+
+    # ── Health Factor ──────────────────────────────────────────────────────────
 
     def health_factor(self, eth_price: float, liq_threshold: float = LIQUIDATION_THRESHOLD) -> float:
         """HF = (collateral_eth * eth_price * liq_threshold) / debt_usdc"""
@@ -51,20 +58,49 @@ class Borrower:
         """HF < 1: vị thế đủ điều kiện thanh lý."""
         return self.health_factor(eth_price) < 1.0
 
+    # ── Trạng thái vị thế ─────────────────────────────────────────────────────
+
     @property
     def is_touched(self) -> bool:
         """Đã bị thanh lý ít nhất một lần (kể cả một phần)."""
         return self.times_liquidated > 0
 
     @property
-    def is_fully_repaid(self) -> bool:
-        """Nợ đã về 0 — vị thế đóng hoàn toàn."""
+    def is_repaid(self) -> bool:
+        """
+        Nợ về 0 mà KHÔNG phát sinh bad debt — vị thế đóng hoàn toàn.
+        Collateral vẫn còn hoặc được thanh lý vừa đủ.
+        """
+        return self.debt_usdc <= 0 and not self._defaulted
+
+    @property
+    def is_defaulted(self) -> bool:
+        """
+        Vỡ nợ: collateral đã cạn kiệt trước khi hết nợ.
+        Phần nợ còn lại (realized_bad_debt > 0) không thể thu hồi được.
+        """
+        return self._defaulted
+
+    @property
+    def is_closed(self) -> bool:
+        """Vị thế đã đóng: hoặc repaid hoặc defaulted (debt_usdc <= 0)."""
         return self.debt_usdc <= 0
+
+    @property
+    def status(self) -> str:
+        """Nhãn trạng thái dạng chuỗi để hiển thị."""
+        if self._defaulted:
+            return "DEFAULTED"
+        if self.debt_usdc <= 0:
+            return "REPAID"
+        return "ACTIVE"
+
+    # ── Chỉ số tài chính ──────────────────────────────────────────────────────
 
     def projected_liquidation_deficit(self, eth_price: float) -> float:
         """
         Phần nợ dự kiến không thể thu hồi nếu liquidate hết toàn bộ collateral còn lại.
-        Đây là ước tính, chưa phải bad debt thực sự (vì chưa thực hiện thanh lý).
+        Đây là ước tính (projected), chưa phải bad debt thực sự (realized).
         projected_deficit = max(0, debt - collateral_value / (1 + bonus))
         """
         recoverable = (self.collateral_eth * eth_price) / (1 + LIQUIDATION_BONUS)

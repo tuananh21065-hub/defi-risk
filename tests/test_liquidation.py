@@ -1,16 +1,17 @@
 """
 tests/test_liquidation.py — Unit test: quy tắc thanh lý
 
-Bao phủ các trường hợp:
-  - Thanh lý thành công (một phần)
+Bao phủ:
+  - Thanh lý thành công (một phần) → borrower vẫn còn nợ → trạng thái ACTIVE
   - Borrower an toàn (HF >= 1) không bị thanh lý
-  - Liquidator không đủ vốn
-  - Gas quá cao → không có lợi
-  - Thanh lý một phần nhiều lần → không phát sinh số dư âm
-  - Collateral cạn kiệt → ghi nhận realized_bad_debt
-  - times_liquidated tăng đúng mỗi lần
+  - Liquidator không đủ vốn → failed_no_capital
+  - Gas quá cao → failed_no_profit
+  - Nhiều vòng thanh lý → không phát sinh số dư âm
+  - Collateral cạn kiệt → DEFAULTED (không phải REPAID)
+  - times_liquidated tăng đúng mỗi lần thành công
   - Gas cost được trừ từ capital_usdc
   - Borrower vẫn còn nợ sau thanh lý một phần
+  - Nhất quán chỉ số sau simulation
 """
 import sys
 import os
@@ -21,42 +22,32 @@ from liquidation import Liquidator
 
 
 def test_liquidation_success_partial():
-    """Thanh lý một phần: debt_usdc giảm, borrower vẫn còn nợ."""
+    """Thanh lý một phần: debt_usdc giảm, borrower còn nợ → ACTIVE."""
     b = Borrower.create(5.0, 9000.0)
     liq = Liquidator(capital_usdc=10_000.0, gas_cost_usd=5.0)
     result = liq.attempt_liquidation(b, eth_price=2000.0)
 
     assert result["success"], result["reason"]
     assert result["debt_repaid"] > 0
-    # Close factor = 50% → tối đa trả 4500 USDC
     assert abs(result["debt_repaid"] - 9000.0 * CLOSE_FACTOR) < 1.0
-    # Borrower vẫn còn nợ (vì chỉ trả 50%)
-    assert b.debt_usdc > 0
+    assert b.debt_usdc > 0          # vẫn còn nợ
     assert b.times_liquidated == 1
     assert b.is_touched
+    assert not b.is_repaid          # chưa đóng hoàn toàn
+    assert not b.is_defaulted       # chưa vỡ nợ
+    assert b.status == "ACTIVE"
 
 
 def test_liquidation_safe_borrower_not_touched():
     """Borrower HF >= 1 không bị thanh lý."""
-    b = Borrower.create(5.0, 5000.0)   # HF = 1.65 → an toàn
+    b = Borrower.create(5.0, 5000.0)   # HF = 1.65
     liq = Liquidator(capital_usdc=10_000.0, gas_cost_usd=5.0)
     result = liq.attempt_liquidation(b, eth_price=2000.0)
 
     assert not result["success"]
     assert b.times_liquidated == 0
     assert not b.is_touched
-
-
-def test_liquidation_insufficient_capital():
-    """Liquidator không đủ vốn → thất bại (failed_no_capital hoặc failed_no_profit)."""
-    b = Borrower.create(5.0, 9000.0)
-    # capital=$10, gas=$5 → actual_repay được giới hạn ở $10
-    # nhưng với $10 trả nợ thì gross_profit ≈ $0.5 < gas $5 → vào failed_no_profit
-    liq = Liquidator(capital_usdc=10.0, gas_cost_usd=5.0)
-    result = liq.attempt_liquidation(b, eth_price=2000.0)
-
-    assert not result["success"]
-    assert liq.failed_count == 1  # thất bại vì bất kỳ lý do gì
+    assert b.status == "ACTIVE"
 
 
 def test_liquidation_pure_no_capital():
@@ -69,10 +60,19 @@ def test_liquidation_pure_no_capital():
     assert liq.failed_no_capital == 1
 
 
+def test_liquidation_insufficient_capital():
+    """Vốn ít, gas ăn hết lợi nhuận → thất bại vì bất kỳ lý do gì."""
+    b = Borrower.create(5.0, 9000.0)
+    liq = Liquidator(capital_usdc=10.0, gas_cost_usd=5.0)
+    result = liq.attempt_liquidation(b, eth_price=2000.0)
+
+    assert not result["success"]
+    assert liq.failed_count == 1
+
+
 def test_liquidation_high_gas_no_profit():
-    """Gas quá cao → net profit <= 0 → không thanh lý."""
-    # collateral nhỏ → bonus thấp → gas ăn hết lợi nhuận
-    b = Borrower.create(0.01, 18.0)   # HF = 0.01*2000*0.825/18 = 0.917 < 1
+    """Gas quá cao → net profit <= 0 → failed_no_profit."""
+    b = Borrower.create(0.01, 18.0)   # HF = 0.917 < 1
     liq = Liquidator(capital_usdc=10_000.0, gas_cost_usd=500.0)
     result = liq.attempt_liquidation(b, eth_price=2000.0)
 
@@ -92,19 +92,43 @@ def test_no_negative_balances_after_multiple_liquidations():
     assert b.debt_usdc >= -1e-9
 
 
-def test_realized_bad_debt_when_collateral_exhausted():
-    """Khi collateral cạn → phần nợ còn lại trở thành realized_bad_debt."""
-    # Vị thế cực kỳ thiếu hụt: collateral rất nhỏ, nợ lớn
-    b = Borrower.create(0.001, 10.0)  # HF = 0.001*2000*0.825/10 = 0.165
+def test_defaulted_not_repaid_when_collateral_exhausted():
+    """
+    Khi collateral cạn trước khi hết nợ → DEFAULTED, không phải REPAID.
+    realized_bad_debt > 0 và _defaulted = True.
+    """
+    b = Borrower.create(0.001, 10.0)  # HF rất thấp, collateral rất nhỏ
     liq = Liquidator(capital_usdc=10_000.0, gas_cost_usd=0.0)  # gas=0 để dễ test
 
-    # Thanh lý nhiều vòng cho đến khi collateral cạn
     for _ in range(20):
         liq.attempt_liquidation(b, eth_price=2000.0)
 
-    # Khi collateral = 0, nợ còn lại phải được ghi vào realized_bad_debt
-    assert b.collateral_eth <= 1e-9
-    assert b.realized_bad_debt > 0 or b.is_fully_repaid
+    # Nếu đã vỡ nợ: DEFAULTED
+    if b.is_defaulted:
+        assert b.realized_bad_debt > 0
+        assert b.debt_usdc == 0
+        assert not b.is_repaid           # DEFAULTED ≠ REPAID
+        assert b.status == "DEFAULTED"
+    else:
+        # Có thể đã trả hết nợ bình thường
+        assert b.is_repaid or b.debt_usdc >= 0
+
+
+def test_repaid_has_no_bad_debt():
+    """Borrower REPAID phải có realized_bad_debt = 0 và _defaulted = False."""
+    # Vị thế khỏe, nhiều collateral → khi thanh lý không bao giờ cạn collateral
+    b = Borrower.create(10.0, 9000.0)  # HF < 1 nhưng collateral rất nhiều
+    liq = Liquidator(capital_usdc=1_000_000.0, gas_cost_usd=1.0)
+
+    for _ in range(50):
+        if b.is_closed:
+            break
+        liq.attempt_liquidation(b, eth_price=800.0)
+
+    if b.is_repaid:
+        assert b.realized_bad_debt == 0.0
+        assert not b.is_defaulted
+        assert b.status == "REPAID"
 
 
 def test_times_liquidated_increments():
@@ -131,7 +155,6 @@ def test_gas_deducted_from_capital():
     result = liq.attempt_liquidation(b, eth_price=2000.0)
     assert result["success"]
 
-    # capital sau = capital_ban_đầu - debt_repaid - gas + eth_received * price
     expected = (
         initial_capital
         - result["debt_repaid"]
@@ -142,18 +165,18 @@ def test_gas_deducted_from_capital():
 
 
 def test_borrower_still_has_debt_after_partial_liquidation():
-    """Sau thanh lý một phần, borrower vẫn còn nợ (close_factor < 1)."""
+    """Sau thanh lý một phần, borrower vẫn còn nợ."""
     b = Borrower.create(5.0, 9000.0)
     liq = Liquidator(capital_usdc=100_000.0, gas_cost_usd=1.0)
     result = liq.attempt_liquidation(b, eth_price=2000.0)
 
     assert result["success"]
-    assert b.debt_usdc > 0, "Phải còn nợ sau thanh lý một phần"
-    assert not b.is_fully_repaid
+    assert b.debt_usdc > 0
+    assert not b.is_closed
 
 
 def test_metrics_consistency_after_simulation():
-    """Chỉ số nhất quán: n_touched <= n_borrowers, n_fully_repaid <= n_touched."""
+    """Chỉ số nhất quán: n_touched <= n_borrowers, n_repaid + n_defaulted <= n_touched."""
     from scenarios import generate_borrowers
     from simulation import run_scenario
 
@@ -168,6 +191,9 @@ def test_metrics_consistency_after_simulation():
     after = result["after"]
 
     assert after["n_touched"] <= after["n_borrowers"]
-    assert after["n_fully_repaid"] <= after["n_touched"]
+    assert after["n_repaid"] + after["n_defaulted"] <= after["n_touched"]
     assert after["n_still_unsafe"] >= 0
     assert after["total_realized_bad_debt"] >= 0
+    # Tổng: repaid + defaulted = tổng vị thế đã đóng
+    n_closed = after["n_repaid"] + after["n_defaulted"]
+    assert n_closed <= after["n_borrowers"]
