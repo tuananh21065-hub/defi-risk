@@ -77,10 +77,19 @@ Ngay cả sau khi thanh lý toàn bộ thế chấp, giao thức vẫn **thiếu
 
 ---
 
-## Tổng hợp 3 ví dụ
+## Bộ kiểm thử chuẩn hóa dùng chung (Benchmark Suite v0.1)
 
-| # | Collateral (ETH) | ETH Price | Debt (USDC) | HF | Trạng thái |
-|---|---|---|---|---|---|
-| 1 | 5 | $2,000 | $5,000 | **1.65** | ✅ An toàn |
-| 2 | 5 | $2,000 | $9,000 | **0.917** | ⚠️ Đủ TL |
-| 3 | 1 | $1,200 | $2,000 | **0.495** | 🔴 Shortfall |
+Áp dụng cho vị thế chuẩn dùng chung giữa mô phỏng Python và Smart Contract trên Sepolia Testnet ([tests/test_benchmark.py](file:///c:/Users/Tuana/.gemini/antigravity/scratch/defi-risk-simulation/tests/test_benchmark.py)):
+- **Thế chấp:** 2 ETH
+- **Dư nợ:** 2.000 USDC
+- **Liquidation Threshold ($LT$):** 0.80
+
+$$HF = \frac{Collateral \times P_{ETH} \times LT}{Debt} = \frac{2 \times P_{ETH} \times 0.80}{2000} = \frac{1.6 \times P_{ETH}}{2000}$$
+
+| Mốc giá ETH ($P_{ETH}$) | Giá trị thế chấp ($V_{col}$) | LTV ($Debt / V_{col}$) | Health Factor ($HF$) | Đánh giá trạng thái |
+|---|---|---|---|---|
+| **$2.000** | $4.000 | 0.5000 (50%) | **1.60** | ✅ An toàn tuyệt đối ($HF \ge 1.0$) |
+| **$1.500** | $3.000 | 0.6667 (66.67%) | **1.20** | ⚠️ Vùng rủi ro, tiệm cận ngưỡng thanh lý |
+| **$1.250** | $2.500 | 0.8000 (80%) | **1.00** | 🚨 Đúng ngưỡng thanh lý ($HF = 1.0$) |
+| **$1.000** | $2.000 | 1.0000 (100%) | **0.80** | 🔴 Dưới ngưỡng, thế chấp bằng nợ (bắt đầu nợ xấu) |
+

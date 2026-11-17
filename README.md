@@ -16,36 +16,36 @@ File notebook: [`defi_risk_lab_colab.ipynb`](defi_risk_lab_colab.ipynb)
 
 ---
 
-## 🎯 Câu hỏi nghiên cứu
+## 🎯 Câu hỏi nghiên cứu (Research Questions)
 
-Khi giá ETH biến động mạnh, chi phí thực thi (gas), năng lực vốn của liquidator và thanh khoản thị trường (market depth) ảnh hưởng ra sao đến:
-- Số vị thế đủ điều kiện thanh lý ($HF < 1$)
-- Số vị thế thực sự được thanh lý (`Touched`)
-- Phân biệt giữa người vay trả hết nợ (`Repaid`), vỡ nợ (`Defaulted`) và còn nguy hiểm (`Still Unsafe`)
-- Thâm hụt dự kiến (`Projected Deficit`) so với nợ xấu thực tế (`Realized Bad Debt`)
-- Điều kiện hình thành vòng phản hồi thanh lý (Liquidation Spiral / Cascade)
+- **RQ1 (Điều kiện thị trường & Chi phí vận hành):** Biến động giá ETH, độ biến động theo giờ, chi phí gas và trượt giá DEX ảnh hưởng như thế nào đến khả năng thanh lý và mức độ an toàn của giao thức?
+- **RQ2 (Hành vi thích nghi & Tương tác tác nhân):** Hành vi thích nghi (Adaptive) của Borrower, Lender và Liquidator tương tác với nhau ra sao khi nhiều cú sốc xảy ra đồng thời (giá, thanh khoản, lãi suất, chi phí vận hành), và làm gia tăng hay giảm nhẹ rủi ro hệ thống so với hành vi cố định (Fixed)?
 
 ---
 
 ## 📁 Cấu trúc dự án
 
 ```
-defi-risk-lab/
-├── model.py                  # Borrower dataclass, Health Factor, phân loại Repaid / Defaulted
-├── liquidation.py            # Quy tắc thanh lý, gas accounting, ghi nhận Realized Bad Debt
-├── simulation.py             # Vòng mô phỏng, sốc giá, Price Feedback & Market Depth
-├── scenarios.py              # Tham số 5 nhóm kịch bản thực nghiệm
-├── metrics.py                # Tính chỉ số đánh giá (trạng thái borrower & tài chính)
-├── app.py                    # Streamlit interactive simulator
-├── main.py                   # Entry point: chạy thực nghiệm, lưu kết quả ra CSV
+defi-risk-simulation/
+├── config/
+│   ├── parameters.py         # Bảng tham số mô phỏng v0.1 (PAPER, ASSUMPTION, PLACEHOLDER, TODO)
+│   └── __init__.py
+├── model.py                  # Dataclass Borrower, Health Factor, trạng thái vị thế
+├── liquidation.py            # Quy tắc thanh lý, gas accounting, nợ xấu
+├── simulation.py             # Vòng lặp mô phỏng 168h, trượt giá DEX phi tuyến
+├── scenarios.py              # 6 kịch bản chuẩn hóa S0–S5 và ma trận E1–E12
+├── metrics.py                # Tính chỉ số đánh giá (trạng thái borrower, lender & tài chính)
+├── app.py                    # Streamlit interactive dashboard (168h timeline, so sánh Fixed vs Adaptive)
+├── main.py                   # Entry point: chạy thực nghiệm E1–E12, xuất kết quả CSV
 ├── defi_risk_lab_colab.ipynb # Google Colab interactive notebook
 ├── tests/
+│   ├── test_benchmark.py     # Bộ kiểm thử chuẩn hóa dùng chung cho Python & Smart Contract
 │   ├── test_model.py         # Test tính HF, ràng buộc số dư
-│   └── test_liquidation.py   # Test quy tắc thanh lý, gas, bad debt (17 tests)
-├── results/                  # CSV kết quả (results.csv)
-├── model_spec.md             # Công thức, định nghĩa và giả định
-├── scope.md                  # Phạm vi MUST / SHOULD / NOT NOW
-└── examples.md               # 3 ví dụ tính tay
+│   └── test_liquidation.py   # Test quy tắc thanh lý, gas, bad debt (19 tests)
+├── results/                  # CSV kết quả mô phỏng
+├── model_spec.md             # Đặc tả toán học, quy tắc tác nhân và cơ chế giao thức
+├── scope.md                  # Phạm vi dự án cập nhật (MUST / SHOULD / NOT NOW)
+└── examples.md               # Ví dụ tính tay và test vectors chuẩn
 ```
 
 ---
@@ -69,34 +69,39 @@ python -m streamlit run app.py
 ```
 Mở trình duyệt tại `http://localhost:8501`.
 
-### 4. Chạy Unit Tests
+### 4. Chạy Unit Tests & Benchmark Suite
 ```bash
 pytest tests/ -v
 ```
-*(Hiện có 17/17 tests kiểm tra toàn diện logic toán học và trạng thái).*
+*(Hiện có 19/19 tests kiểm tra toàn diện logic toán học, trạng thái và bộ kiểm thử chuẩn hóa).*
 
 ---
 
-## 📊 Các nhóm kịch bản thí nghiệm
+## 📊 Khung kịch bản nghiên cứu (Scenarios S0–S5)
 
-1. **A. Scenario Analysis (Sốc giá ETH):** Khảo sát các mức sốc từ 0% đến -40% giá ETH.
-2. **B. Gas Sensitivity (Độ nhạy chi phí Gas):** Khảo sát gas từ $1 đến $100 khi sốc -20%.
-3. **C. Cascade Analysis (Vòng phản hồi & Thanh khoản thị trường):** Bật `price_feedback` và thay đổi `market_depth` từ $500K đến $50M.
-4. **D. Capital Sensitivity (Năng lực vốn Liquidator):** Thay đổi vốn từ $50K đến $1M USDC.
-5. **E. Multi-seed Robustness Check:** Chạy qua 5 seed khác nhau (`42, 123, 7, 99, 2024`) để kiểm chứng tính ổn định của các kết luận.
+1. **S0 (Cơ sở / Baseline):** Không có cú sốc, giữ nguyên đường giá 168h, gas $10, trượt giá chuẩn.
+2. **S1 (Cú sốc giá):** ETH giảm 43% trong 24 bước (từ t=24), hệ số biến động ×10 (Kiểm tra H1, H4).
+3. **S2 (Cú sốc thanh khoản):** Lender rút 50% tổng cung trong 12 bước từ t=24 (Kiểm tra H3).
+4. **S3 (Cú sốc lãi suất):** Tỷ lệ sử dụng vốn $U$ tăng vọt lên 0.90 trong 12 bước, kích hoạt lãi suất dốc $Slope_2$.
+5. **S4 (Cú sốc chi phí vận hành):** Phí gas tăng 100 USD/tx, trượt giá $s \times 5, V \times 0.1$, ETH giảm 25% (Kiểm tra H2, H5).
+6. **S5 (Cú sốc kết hợp):** Đồng thời kích hoạt sốc giá S1 (-43%), sốc thanh khoản S2 (rút 50%) và sốc vận hành S4 (gas $100, trượt giá tăng) (Kiểm tra H5, H6).
+
+Ma trận thực nghiệm gồm **12 thực nghiệm chính (E1–E12)** đối chiếu trực tiếp chiến lược **Cố định (Fixed)** và **Thích nghi (Adaptive)** trên cùng seed (42) và cùng đường giá.
 
 ---
 
-## 🔢 Tham số mô hình cốt lõi
+## 🔢 Tham số mô hình cốt lõi (v0.1)
 
-| Tham số | Ký hiệu | Giá trị | Ý nghĩa |
-|---|---|---|---|
-| Liquidation Threshold | $LT$ | 0.825 | Ngưỡng thanh lý (HF < 1) |
-| Max Loan-to-Value | $LTV$ | 0.80 | Tỷ lệ nợ tối đa khi mở vị thế |
-| Close Factor | $CF$ | 0.50 | Tối đa 50% nợ được thanh lý mỗi lần |
-| Liquidation Bonus | $B$ | 0.05 | Thưởng 5% ETH cho liquidator |
-| Giá ETH ban đầu | $P_0$ | $2,000 | Mốc định giá chuẩn |
-| Vốn Liquidator cơ sở | $C_0$ | $500,000 | Vốn USDC sẵn có của Liquidator |
+| Tham số | Ký hiệu | Giá trị chuẩn | Các mức quét thực nghiệm | Nhãn & Nguồn |
+|---|---|---|---|---|
+| Liquidation Threshold | $LT$ | 0.80 | 0.70; 0.75; 0.80; 0.85 | `PLACEHOLDER` (Qin ví dụ; Aave V3) |
+| Liquidation Bonus | $Bonus$ | 0.05 (5%) | 0.05; 0.08; 0.10; 0.15 | `PAPER` (Qin: Aave 5-15%, Compound 8%) |
+| Close Factor | $CF$ | 0.50 (50%) | Cố định 0.50 | `PAPER` (Chaudhary & Pinna; Qin) |
+| Lãi suất Kink | $U_{opt}$ | 0.80 (80%) | 0.45; 0.80; 0.90 | `PLACEHOLDER` (Base 0%, Slope1 4%, Slope2 75%) |
+| Thời gian mô phỏng | $T$ | 168 bước | 168 giờ (7 ngày) | `ASSUMPTION` (ABM cần chân trời dài) |
+| Số lần Monte Carlo | $N$ | 100 / 1.000 | 100 (dev) / 1.000 (chính thức) | `PAPER` (Chaudhary & Pinna) |
+| Phí Gas | $gas$ | $10 / $100 | $10 (thấp) vs $100 (nghẽn mạng) | `PAPER` (Qin) |
+| Hàm trượt giá DEX | $\sigma(x)$ | $\gamma + s(x/V)^\omega$ | $\gamma=0.003, s=1.0, V=10^9$ USD | `PAPER` (Chaudhary & Pinna) |
 
 ---
 
